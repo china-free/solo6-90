@@ -90,12 +90,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     }
 
     for (const room of level.rooms) {
-      drawRoom(ctx, room, worldToScreen, scale);
-    }
-
-    for (const room of level.rooms) {
       const segs = segmentsByRoom.get(room.id) ?? [];
-      if (segs.length === 0) continue;
+
+      drawRoom(ctx, room, worldToScreen, scale);
 
       ctx.save();
 
@@ -107,18 +104,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
 
       ctx.restore();
-    }
 
-    for (const room of level.rooms) {
-      const segs = segmentsByRoom.get(room.id) ?? [];
       for (const seg of segs) {
         if (seg.exitWall !== undefined && room.walls[seg.exitWall].connection) {
           drawWallExitGlow(ctx, seg, room, worldToScreen, scale);
         }
       }
-    }
 
-    for (const room of level.rooms) {
       for (const el of room.elements) {
         drawElement(
           ctx,
@@ -458,10 +450,68 @@ function createRoomClipPath(
   const w = br.x - tl.x;
   const h = br.y - tl.y;
 
-  const expand = 0.25 * scale;
+  const IN = 1.5 * scale;
+  const OUT = 6.0 * scale;
+
+  const connR = room.walls[DIR_RIGHT].connection !== undefined;
+  const connD = room.walls[DIR_DOWN].connection !== undefined;
+  const connL = room.walls[DIR_LEFT].connection !== undefined;
+  const connU = room.walls[DIR_UP].connection !== undefined;
+
+  const offU = connU ? -OUT : IN;
+  const offD = connD ? h + OUT : h - IN;
+  const offL = connL ? -OUT : IN;
+  const offR = connR ? w + OUT : w - IN;
+
+  const xL = tl.x + offL;
+  const xR = tl.x + offR;
+  const yU = tl.y + offU;
+  const yD = tl.y + offD;
+
+  const xLi = tl.x + IN;
+  const xRi = tl.x + w - IN;
+  const yUi = tl.y + IN;
+  const yDi = tl.y + h - IN;
+
+  const pts: { x: number; y: number }[] = [];
+
+  if (connU) {
+    pts.push({ x: xLi, y: yU });
+    pts.push({ x: xRi, y: yU });
+  } else {
+    pts.push({ x: xL, y: yU });
+  }
+  pts.push({ x: xRi, y: yUi });
+
+  if (connR) {
+    pts.push({ x: xR, y: yUi });
+    pts.push({ x: xR, y: yDi });
+  } else {
+    pts.push({ x: xR, y: yUi });
+  }
+  pts.push({ x: xRi, y: yDi });
+
+  if (connD) {
+    pts.push({ x: xRi, y: yD });
+    pts.push({ x: xLi, y: yD });
+  } else {
+    pts.push({ x: xRi, y: yD });
+  }
+  pts.push({ x: xLi, y: yDi });
+
+  if (connL) {
+    pts.push({ x: xL, y: yDi });
+    pts.push({ x: xL, y: yUi });
+  } else {
+    pts.push({ x: xL, y: yDi });
+  }
+  pts.push({ x: xLi, y: yUi });
 
   ctx.beginPath();
-  ctx.rect(tl.x - expand, tl.y - expand, w + expand * 2, h + expand * 2);
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) {
+    ctx.lineTo(pts[i].x, pts[i].y);
+  }
   ctx.closePath();
 }
 
