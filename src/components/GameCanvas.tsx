@@ -73,6 +73,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       y: y * scale + offsetY,
     });
 
+    const segmentsByRoom = new Map<string, RaySegment[]>();
+    for (const ray of traceResult.rays) {
+      for (const seg of ray.segments) {
+        if (!segmentsByRoom.has(seg.roomId)) {
+          segmentsByRoom.set(seg.roomId, []);
+        }
+        segmentsByRoom.get(seg.roomId)!.push(seg);
+      }
+    }
+
     drawBackground(ctx, canvas.width, canvas.height);
 
     for (const room of level.rooms) {
@@ -83,9 +93,28 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       drawRoom(ctx, room, worldToScreen, scale);
     }
 
-    for (const ray of traceResult.rays) {
-      for (const seg of ray.segments) {
-        drawRaySegment(ctx, seg, roomsById, worldToScreen, scale);
+    for (const room of level.rooms) {
+      const segs = segmentsByRoom.get(room.id) ?? [];
+      if (segs.length === 0) continue;
+
+      ctx.save();
+
+      createRoomClipPath(ctx, room, worldToScreen, scale);
+      ctx.clip();
+
+      for (const seg of segs) {
+        drawRaySegment(ctx, seg, room, worldToScreen, scale);
+      }
+
+      ctx.restore();
+    }
+
+    for (const room of level.rooms) {
+      const segs = segmentsByRoom.get(room.id) ?? [];
+      for (const seg of segs) {
+        if (seg.exitWall !== undefined && room.walls[seg.exitWall].connection) {
+          drawWallExitGlow(ctx, seg, room, worldToScreen, scale);
+        }
       }
     }
 
@@ -418,41 +447,139 @@ function drawRoomConnections(
   }
 }
 
-function drawRaySegment(
+function createRoomClipPath(
   ctx: CanvasRenderingContext2D,
-  seg: RaySegment,
-  roomsById: Map<string, Room>,
+  room: Room,
   worldToScreen: (x: number, y: number) => { x: number; y: number },
   scale: number
 ) {
-  const room = roomsById.get(seg.roomId);
-  if (!room) return;
+  const tl = worldToScreen(room.position.x, room.position.y);
+  const br = worldToScreen(room.position.x + room.size, room.position.y + room.size);
+  const w = br.x - tl.x;
+  const h = br.y - tl.y;
+
+  const expand = 0.25 * scale;
+
+  ctx.beginPath();
+  ctx.rect(tl.x - expand, tl.y - expand, w + expand * 2, h + expand * 2);
+  ctx.closePath();
+}
+
+function drawWallExitGlow(
+  ctx: CanvasRenderingContext2D,
+  seg: RaySegment,
+  room: Room,
+  worldToScreen: (x: number, y: number) => { x: number; y: number },
+  scale: number
+) {
+  if (seg.exitWall === undefined) return;
 
   const from = worldToScreen(room.position.x + seg.from.x, room.position.y + seg.from.y);
   const to = worldToScreen(room.position.x + seg.to.x, room.position.y + seg.to.y);
 
-  const color = rgbToCss(seg.color, 0.95);
-  const glowColor = rgbToCss(seg.color, 0.4);
+  const color = rgbToCss(seg.color, 0.9);
+  const glowColor = rgbToCss(seg.color, 0.35);
+
+  const glowExtend = 6 * scale;
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 0.001) return;
+  const nx = dx / len;
+  const ny = dy / len;
+
+  const extTo = {
+    x: to.x + nx * glowExtend,
+    y: to.y + ny * glowExtend,
+  };
+
+  const extFrom = {
+    x: to.x - nx * glowExtend * 0.5,
+    y: to.y - ny * glowExtend * 0.5,
+  };
 
   ctx.strokeStyle = glowColor;
   ctx.lineWidth = 10 * Math.max(0.5, scale);
   ctx.lineCap = 'round';
   ctx.shadowColor = color;
-  ctx.shadowBlur = 20;
+  ctx.shadowBlur = 18;
   ctx.beginPath();
-  ctx.moveTo(from.x, from.y);
-  ctx.lineTo(to.x, to.y);
+  ctx.moveTo(extFrom.x, extFrom.y);
+  ctx.lineTo(extTo.x, extTo.y);
   ctx.stroke();
 
   ctx.strokeStyle = color;
   ctx.lineWidth = 3 * Math.max(0.5, scale);
   ctx.shadowBlur = 10;
   ctx.beginPath();
-  ctx.moveTo(from.x, from.y);
-  ctx.lineTo(to.x, to.y);
+  ctx.moveTo(extFrom.x, extFrom.y);
+  ctx.lineTo(extTo.x, extTo.y);
   ctx.stroke();
 
   ctx.shadowBlur = 0;
+  ctx.lineCap = 'butt';
+}
+
+function drawRaySegment(
+  ctx: CanvasRenderingContext2D,
+  seg: RaySegment,
+  room: Room,
+  worldToScreen: (x: number, y: number) => { x: number; y: number },
+  scale: number
+) {
+  const from = worldToScreen(room.position.x + seg.from.x, room.position.y + seg.from.y);
+  const to = worldToScreen(room.position.x + seg.to.x, room.position.y + seg.to.y);
+
+  const color = rgbToCss(seg.color, 0.95);
+  const glowColor = rgbToCss(seg.color, 0.4);
+
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const len = Math.hypot(dx, dy);
+  let nx = 0, ny = 0;
+  if (len > 0.001) {
+    nx = dx / len;
+    ny = dy / len;
+  }
+
+  const isExitAtConn =
+    seg.exitWall !== undefined &&
+    room.walls[seg.exitWall].connection !== undefined;
+
+  const padStart = 0.8 * scale;
+  const padEnd = isExitAtConn ? 0 : 0.8 * scale;
+
+  const drawFrom = {
+    x: from.x + nx * padStart,
+    y: from.y + ny * padStart,
+  };
+  const drawTo = {
+    x: to.x - nx * padEnd,
+    y: to.y - ny * padEnd,
+  };
+
+  const s = Math.max(0.5, scale);
+
+  ctx.strokeStyle = glowColor;
+  ctx.lineWidth = 10 * s;
+  ctx.lineCap = 'butt';
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 20;
+  ctx.beginPath();
+  ctx.moveTo(drawFrom.x, drawFrom.y);
+  ctx.lineTo(drawTo.x, drawTo.y);
+  ctx.stroke();
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 3 * s;
+  ctx.shadowBlur = 10;
+  ctx.beginPath();
+  ctx.moveTo(drawFrom.x, drawFrom.y);
+  ctx.lineTo(drawTo.x, drawTo.y);
+  ctx.stroke();
+
+  ctx.shadowBlur = 0;
+  ctx.lineCap = 'butt';
 }
 
 function drawElement(
